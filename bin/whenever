@@ -22,7 +22,7 @@ OptionParser.new do |opts|
   end
   opts.on('-c', '--clear-crontab [schedule]',
           'Uninstall the schedule from crontab.',
-          '  Default: full path to schedule.rb file') do |identifier|    
+          '  Default: full path to schedule.rb file') do |identifier|
     options[:clear] = true
     options[:identifier] = identifier if identifier
   end
@@ -45,6 +45,13 @@ OptionParser.new do |opts|
     options[:crontab_command] = crontab_command if crontab_command
   end
   opts.on('-v', '--version') { puts "Whenever v#{Whenever::VERSION}"; exit(0) }
+  opts.on('-y', '--yaml-path [path]', 'Writes crontab to file in yaml format. Defaults to ./crontab.yaml') do |path|
+    if path
+      options[:yaml_path] = path
+    else
+      options[:yaml_path]='./crontab.yaml'
+    end
+  end
 end.parse!
 
 Whenever::CommandLine.execute(options)

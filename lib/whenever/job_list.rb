@@ -13,6 +13,8 @@ module Whenever
 
       @roles = options[:roles] || []
 
+      @yaml_path = options[:yaml_path] || "./crontab.yaml"
+
       setup_file = File.expand_path('../setup.rb', __FILE__)
       setup = File.read(setup_file)
       schedule = if options[:string]
@@ -73,6 +75,35 @@ module Whenever
 
     def generate_cron_output
       [environment_variables, cron_jobs].compact.join
+    end
+
+    # Generates aYAML with crons.YAML may look like following:
+    # The YAML will look like following
+    #     - name: CategoryCuratedKeyphrase.refresh_last_crawled_at
+    #       env: RAILS_RUNNER_NAME='\''runner CategoryCuratedKeyphrase.refresh_last_crawled_at'\''
+    #       command: exec rails runner -e development '\''Skroutz.run_cron("CategoryCuratedKeyphrase.refresh_last_crawled_at")
+    #         { CategoryCuratedKeyphrase.refresh_last_crawled_at }'\''
+    #       time: 30 2 * * *
+    #     - name: mailer:prompt_for_shopping_feedback
+    #       env: ''
+    #       command: exec rake mailer:prompt_for_shopping_feedback
+    #       time: 0 10 * * *
+    def generate_yaml_output
+      return if @jobs.empty?
+
+      output = []
+      @jobs.each do |mailto, time_and_jobs|
+        output_jobs = []
+
+        time_and_jobs.each do |time, jobs|
+          output_jobs << yaml_cron_jobs_of_time(time, jobs)
+        end
+
+        output_jobs.reject! { |output_job| output_job.empty? }
+
+        output << output_jobs
+      end
+      File.open(@yaml_path, 'w') {|f| f.write output[0][0].to_yaml }
     end
 
   private
@@ -154,6 +185,62 @@ module Whenever
       end
 
       shortcut_jobs.join + combine(regular_jobs).join
+    end
+
+    # Returns a list with hashes to populate the YAML.
+    # Each job in YAML will contain a name, env vars for the job,
+    # the actual command that the job executes and the time of schedule.
+    def yaml_cron_jobs_of_time(time, jobs)
+      list = []
+      jobs.each do |job|
+        next unless roles.empty? || roles.any? do |r|
+          job.has_role?(r)
+        end
+        Whenever::Output::Cron.yaml_output(time, job, :chronic_options => @chronic_options) do |time, command|
+          formatted_command = format_command(command)
+          command_parts = formatted_command.split
+          # formatted_command may look like following
+          # exec rake insights:search_session_analysis
+          env = ''
+          name = command_parts.last
+
+          # formatted_command may look like following
+          # RAILS_RUNNER_NAME='\''runner CategoryCuratedKeyphrase.refresh_last_crawled_at'\''
+          #  bundle exec rails runner -e development '\''Skroutz.run_cron("CategoryCuratedKeyphrase.refresh_last_crawled_at")
+          #  { CategoryCuratedKeyphrase.refresh_last_crawled_at }'\''
+          #
+          # The produced yaml should look like below, populate job entry accordingly.
+          # - name: CategoryCuratedKeyphrase.refresh_last_crawled_at
+          #   env: RAILS_RUNNER_NAME='\''runner CategoryCuratedKeyphrase.refresh_last_crawled_at'\''
+          #   command: exec rails runner -e development '\''Skroutz.run_cron("CategoryCuratedKeyphrase.refresh_last_crawled_at")
+          #            { CategoryCuratedKeyphrase.refresh_last_crawled_at }'\''
+          if formatted_command.include? 'RAILS_RUNNER_NAME'
+            env = command_parts.first + ' ' + command_parts.second
+            name = command_parts.second[0...-4]
+            formatted_command = command_parts.drop(3).join(' ')
+          end
+          list.append({'name'=> name, 'env'=> env,'command'=> formatted_command, 'time'=> time})
+        end
+      end
+      list
+    end
+
+    def format_command(command)
+      # Command will look like either of the following, remove unnecesary parts
+      # /bin/bash -l -c 'cd /var/sites/skroutz_cap/current &&
+      # RAILS_RUNNER_NAME='\''runner CategoryCuratedKeyphrase.refresh_last_crawled_at'\''
+      #  bundle exec rails runner -e development
+      #  '\''Skroutz.run_cron("CategoryCuratedKeyphrase.refresh_last_crawled_at")
+      #  { CategoryCuratedKeyphrase.refresh_last_crawled_at }'\''
+      #
+      # /bin/bash -l -c 'cd /var/sites/skroutz_cap/current &&
+      #  RAILS_ENV=development bundle exec rake search:stemming_exceptions:update_backend --silent > /dev/null'
+      command.slice! "/bin/bash -l -c 'cd /var/sites/skroutz_cap/current && "
+      command.slice! "RAILS_ENV=production bundle "
+      command.slice! "RAILS_ENV=development bundle "
+      command.slice! " --silent "
+      command.slice! "> /dev/null'"
+      command
     end
 
     def cron_jobs
