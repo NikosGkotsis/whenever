@@ -103,7 +103,8 @@ module Whenever
 
         output << output_jobs
       end
-      File.open(@yaml_path, 'w') {|f| f.write output[0][0].to_yaml }
+      y ={'cronjobs'=>output[0][0]}
+      File.open(@yaml_path, 'w') {|f| f.write y.to_yaml }
     end
 
   private
@@ -192,18 +193,15 @@ module Whenever
     # the actual command that the job executes and the time of schedule.
     def yaml_cron_jobs_of_time(time, jobs)
       list = []
+      id = 0
       jobs.each do |job|
         next unless roles.empty? || roles.any? do |r|
           job.has_role?(r)
         end
+        id += 1
         Whenever::Output::Cron.yaml_output(time, job, :chronic_options => @chronic_options) do |time, command|
           formatted_command = format_command(command)
           command_parts = formatted_command.split
-          # formatted_command may look like following
-          # exec rake insights:search_session_analysis
-          env = ''
-          name = command_parts.last
-
           # formatted_command may look like following
           # RAILS_RUNNER_NAME='\''runner CategoryCuratedKeyphrase.refresh_last_crawled_at'\''
           #  bundle exec rails runner -e development '\''Skroutz.run_cron("CategoryCuratedKeyphrase.refresh_last_crawled_at")
@@ -211,15 +209,18 @@ module Whenever
           #
           # The produced yaml should look like below, populate job entry accordingly.
           # - name: CategoryCuratedKeyphrase.refresh_last_crawled_at
-          #   env: RAILS_RUNNER_NAME='\''runner CategoryCuratedKeyphrase.refresh_last_crawled_at'\''
+          #   RAILS_RUNNER: CategoryCuratedKeyphrase.refresh_last_crawled_at
           #   command: exec rails runner -e development '\''Skroutz.run_cron("CategoryCuratedKeyphrase.refresh_last_crawled_at")
           #            { CategoryCuratedKeyphrase.refresh_last_crawled_at }'\''
           if formatted_command.include? 'RAILS_RUNNER_NAME'
-            env = command_parts.first + ' ' + command_parts.second
-            name = command_parts.second[0...-4]
+            rails_runner = command_parts.second[0...-4]
             formatted_command = command_parts.drop(3).join(' ')
+            list.append({'id'=> id, 'command'=> rails_runner, 'time'=> time, 'RAILS_RUNNER'=> rails_runner})
+            next
           end
-          list.append({'name'=> name, 'env'=> env,'command'=> formatted_command, 'time'=> time})
+          # formatted_command will look like following
+          # exec rake insights:search_session_analysis
+          list.append({'id'=> id, 'command'=> formatted_command, 'time'=> time})
         end
       end
       list
